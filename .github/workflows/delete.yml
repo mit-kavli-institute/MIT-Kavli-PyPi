@@ -40,5 +40,5 @@ jobs:
         title: '[🤖] Delete `${{ inputs.package_name }}` from PyPi index'
         body: Automatically generated PR, deleting `${{ inputs.package_name }}` from
           PyPi index.
-        branch-suffix: random
+        branch: delete-${{ inputs.package_name }}-${{ github.run_number }}
         delete-branch: true
