@@ -240,7 +240,7 @@ def delete(pkg_name):
     norm_pkg_name = normalize(pkg_name)
 
     if not package_exists(soup, norm_pkg_name):
-        raise ValueError(f"Package {norm_pkg_name} seems to not exists")
+        raise ValueError(f"Package '{norm_pkg_name}' seems to not exists")
 
     # Remove the package directory
     shutil.rmtree(norm_pkg_name)
