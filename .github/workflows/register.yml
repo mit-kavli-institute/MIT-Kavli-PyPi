@@ -42,6 +42,9 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        pip install beautifulsoup4 build
     - name: Run Action
       env:
         PKG_ACTION: REGISTER
@@ -51,7 +54,6 @@ jobs:
         PKG_SHORT_DESC: ${{ inputs.short_desc }}
         PKG_HOMEPAGE: ${{ inputs.homepage }}
       run: |
-        pip install beautifulsoup4
         python .github/actions.py 
     - name: Create Pull Request
       uses: peter-evans/create-pull-request@v7

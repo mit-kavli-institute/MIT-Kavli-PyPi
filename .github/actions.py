@@ -2,13 +2,19 @@ import os
 import copy
 import re
 import shutil
+import sys
 
 from bs4 import BeautifulSoup
+
+# Add the .github directory to path to import download_release
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from download_release import download_package_files
 
 
 INDEX_FILE = "index.html"
 TEMPLATE_FILE = "pkg_template.html"
 YAML_ACTION_FILES = [".github/workflows/delete.yml", ".github/workflows/update.yml"]
+PACKAGES_DIR = "packages"
 
 INDEX_CARD_HTML = '''
 <a class="card" href="">
@@ -57,8 +63,31 @@ def transform_github_url(input_url):
     return raw_url
 
 
+def get_package_links(norm_pkg_name, norm_version, version, package_files):
+    """
+    Generate HTML links for package files.
+    
+    Returns:
+        String containing HTML anchor elements for wheel and/or tar.gz files
+    """
+    links = []
+    base_url = f"../packages/{norm_pkg_name}/"
+    
+    if package_files.get('wheel'):
+        wheel_filename = os.path.basename(package_files['wheel'])
+        links.append(f'<a href="{base_url}{wheel_filename}">{norm_version}</a>')
+    elif package_files.get('tar_gz'):
+        tar_filename = os.path.basename(package_files['tar_gz'])
+        links.append(f'<a href="{base_url}{tar_filename}">{norm_version}</a>')
+    else:
+        # Fallback to git URL (without egg parameter)
+        return f'<a href="git+{package_files.get("homepage", "")}@{version}">{norm_version}</a>'
+    
+    # Return just the first link for single version display
+    return links[0] if links else ""
+
+
 def register(pkg_name, version, author, short_desc, homepage):
-    link = f'git+{homepage}@{version}'
     long_desc = transform_github_url(homepage)
     # Read our index first
     with open(INDEX_FILE) as html_file:
@@ -68,6 +97,18 @@ def register(pkg_name, version, author, short_desc, homepage):
 
     if package_exists(soup, norm_pkg_name):
         raise ValueError(f"Package {norm_pkg_name} seems to already exists")
+
+    # Download package files
+    package_output_dir = os.path.join(PACKAGES_DIR, norm_pkg_name)
+    print(f"Downloading package files for {pkg_name} v{version}")
+    try:
+        package_files = download_package_files(
+            homepage, version, pkg_name, package_output_dir
+        )
+    except Exception as e:
+        print(f"Warning: Could not download package files: {e}")
+        # Continue with git URL fallback
+        package_files = {'homepage': homepage}
 
     # Create a new anchor element for our new package
     placeholder_card = BeautifulSoup(INDEX_CARD_HTML, 'html.parser')
@@ -88,10 +129,13 @@ def register(pkg_name, version, author, short_desc, homepage):
     with open(TEMPLATE_FILE) as temp_file:
         template = temp_file.read()
 
+    # Generate package links HTML
+    package_links = get_package_links(norm_pkg_name, norm_version, version, package_files)
+
     template = template.replace("_package_name", pkg_name)
     template = template.replace("_norm_version", norm_version)
     template = template.replace("_version", version)
-    template = template.replace("_link", f"{link}#egg={norm_pkg_name}-{norm_version}")
+    template = template.replace("_link", package_links)
     template = template.replace("_homepage", homepage)
     template = template.replace("_author", author)
     template = template.replace("_long_description", long_desc)
@@ -129,11 +173,23 @@ def update(pkg_name, version):
     # Extract the URL from the onclick attribute
     button = soup.find('button', id='repoHomepage')
     if button:
-        link = button.get("onclick")[len("openLinkInNewTab('"):-2]
+        homepage = button.get("onclick")[len("openLinkInNewTab('"):-2]
     else:
         raise Exception("Homepage URL not found")
 
-    # Create a new anchor element for our new version
+    # Download package files for this version
+    package_output_dir = os.path.join(PACKAGES_DIR, norm_pkg_name)
+    print(f"Downloading package files for {pkg_name} v{version}")
+    try:
+        package_files = download_package_files(
+            homepage, version, pkg_name, package_output_dir
+        )
+    except Exception as e:
+        print(f"Warning: Could not download package files: {e}")
+        # Continue with git URL fallback
+        package_files = {'homepage': homepage}
+
+    # Create a new div element for our new version
     original_div = soup.find('section', class_='versions').findAll('div')[-1]
     new_div = copy.copy(original_div)
     anchor = new_div.find('a')
@@ -146,8 +202,24 @@ def update(pkg_name, version):
         # replace the latest main version
         main_version_span = soup.find('span', id='latest-main-version')
         main_version_span.string = version
+    
+    # Clear the anchor and add new links
+    anchor.clear()
     anchor.string = norm_version
-    anchor['href'] = f"git+{link}@{version}#egg={norm_pkg_name}-{norm_version}"
+    
+    # Generate package links for this version
+    base_url = f"../packages/{norm_pkg_name}/"
+    if package_files.get('wheel'):
+        wheel_filename = os.path.basename(package_files['wheel'])
+        anchor['href'] = f"{base_url}{wheel_filename}"
+        anchor['title'] = wheel_filename
+    elif package_files.get('tar_gz'):
+        tar_filename = os.path.basename(package_files['tar_gz'])
+        anchor['href'] = f"{base_url}{tar_filename}"
+        anchor['title'] = tar_filename
+    else:
+        # Fallback to git URL without egg parameter
+        anchor['href'] = f"git+{homepage}@{version}"
 
     # Add it to our index
     original_div.insert_after(new_div)
@@ -172,6 +244,11 @@ def delete(pkg_name):
 
     # Remove the package directory
     shutil.rmtree(norm_pkg_name)
+    
+    # Remove the package files directory if it exists
+    package_files_dir = os.path.join(PACKAGES_DIR, norm_pkg_name)
+    if os.path.exists(package_files_dir):
+        shutil.rmtree(package_files_dir)
 
     # Find and remove the anchor corresponding to our package
     anchor = soup.find('a', attrs={"href": f"{norm_pkg_name}/"})
